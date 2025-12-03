@@ -15,7 +15,7 @@ except ImportError:
 
 app = FastAPI()
 
-# Dev CORS: allow all (we can tighten later when deployed)
+# Dev CORS: allow all (can tighten later)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,29 +31,48 @@ def root():
         "endpoint": "/api/analyze-stock?symbol=RELIANCE",
     }
 
-
 # =========================
-#  SYMBOL & PRICE HISTORY
+#  SYMBOL RESOLUTION
 # =========================
 
-def normalize_symbol(user_symbol: str) -> tuple[str, str]:
+def resolve_symbol(user_symbol: str):
     """
-    User types: RELIANCE, TCS, HDFCBANK
-    Backend uses: RELIANCE.NS, etc. for yfinance.
-    Returns (clean_user_symbol, yahoo_symbol).
+    Try to map what the user typed into a working yfinance symbol.
+
+    Strategy:
+      - If user includes '.', treat it as full ticker (e.g. RELIANCE.NS, AAPL)
+      - Else try: SYM.NS (NSE), then SYM.BO (BSE), then SYM (no suffix)
+    Returns:
+      (clean_user_symbol, yahoo_symbol, error_message_or_None)
     """
     sym = (user_symbol or "").strip().upper()
     if not sym:
-        return "", ""
+        return "", None, "Please provide a stock symbol."
 
-    # If user already has a suffix (e.g. RELIANCE.NS), keep it
+    # Candidate tickers to try with yfinance
     if "." in sym:
-        return sym, sym
+        candidates = [sym]
+    else:
+        candidates = [sym + ".NS", sym + ".BO", sym]
 
-    # Assume NSE suffix for now
-    yahoo_sym = sym + ".NS"
-    return sym, yahoo_sym
+    for cand in candidates:
+        try:
+            ticker = yf.Ticker(cand)
+            df = ticker.history(period="6mo", interval="1d")
+            if df is not None and not df.empty:
+                return sym, cand, None
+        except Exception:
+            # If this candidate fails badly, just try the next one
+            continue
 
+    return sym, None, (
+        "Could not find market data for this symbol. "
+        "Try using the official NSE/BSE code (e.g. RELIANCE, TCS, HDFCBANK)."
+    )
+
+# =========================
+#  PRICE HISTORY VIA YFINANCE
+# =========================
 
 def fetch_price_history(yahoo_symbol: str):
     """
@@ -67,14 +86,13 @@ def fetch_price_history(yahoo_symbol: str):
         return {"error": f"yfinance error: {e}"}
 
     if df is None or df.empty:
-        return {"error": "No data returned from yfinance."}
+        return {"error": "No data returned from yfinance for this symbol."}
 
     closes = df["Close"].dropna().tolist()
     if len(closes) < 10:
         return {"error": "Not enough price history to analyze."}
 
     return closes
-
 
 # =========================
 #  KITE INTRADAY SIGNAL (OPTIONAL)
@@ -142,7 +160,6 @@ def get_kite_intraday_risk(user_sym: str):
 
     return {"level": level}
 
-
 # =========================
 #  MAIN HYBRID ENDPOINT
 # =========================
@@ -157,9 +174,13 @@ def analyze_stock(symbol: str):
     Extra spice: if Kite is configured for YOU, refine risk using intraday volatility,
     but only as a category (Low/Medium/High), never exposing raw broker data.
     """
-    user_sym, yahoo_sym = normalize_symbol(symbol)
-    if not user_sym:
-        return {"error": "Please provide a stock symbol."}
+    user_sym, yahoo_sym, sym_error = resolve_symbol(symbol)
+
+    if sym_error:
+        return {
+            "error": sym_error,
+            "symbol": user_sym or symbol,
+        }
 
     history = fetch_price_history(yahoo_sym)
 
