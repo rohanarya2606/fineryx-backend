@@ -1,11 +1,12 @@
 import os
 import math
 from statistics import mean
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from typing import List, Optional
 
 import yfinance as yf
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # Optional: KiteConnect for extra intraday signals (for YOU only)
 try:
@@ -15,7 +16,7 @@ except ImportError:
 
 app = FastAPI()
 
-# Dev CORS: allow all (can tighten later)
+# CORS – open for now (can tighten later)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,20 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def root():
-    return {
-        "message": "Fineryx AI hybrid backend (yfinance + optional Kite) is running 🚀",
-        "endpoint": "/api/analyze-stock?symbol=RELIANCE",
-    }
-
 # =========================
-#  SYMBOL RESOLUTION
+#  HELPER: SYMBOL RESOLUTION
 # =========================
 
 def resolve_symbol(user_symbol: str):
     """
-    Try to map what the user typed into a working yfinance symbol.
+    Map user input to a working yfinance symbol.
 
     Strategy:
       - If user includes '.', treat it as full ticker (e.g. RELIANCE.NS, AAPL)
@@ -49,7 +43,6 @@ def resolve_symbol(user_symbol: str):
     if not sym:
         return "", None, "Please provide a stock symbol."
 
-    # Candidate tickers to try with yfinance
     if "." in sym:
         candidates = [sym]
     else:
@@ -62,7 +55,6 @@ def resolve_symbol(user_symbol: str):
             if df is not None and not df.empty:
                 return sym, cand, None
         except Exception:
-            # If this candidate fails badly, just try the next one
             continue
 
     return sym, None, (
@@ -71,31 +63,37 @@ def resolve_symbol(user_symbol: str):
     )
 
 # =========================
-#  PRICE HISTORY VIA YFINANCE
+#  HELPER: PRICE HISTORY
 # =========================
 
-def fetch_price_history(yahoo_symbol: str):
+def fetch_history_df(symbol: str, period: str = "1y", interval: str = "1d"):
     """
-    Use yfinance to fetch ~1 year of daily price history.
-    Returns list of closes OR dict(error="...").
+    Return a yfinance history DataFrame or dict(error=...).
     """
     try:
-        ticker = yf.Ticker(yahoo_symbol)
-        df = ticker.history(period="1y", interval="1d")
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period=period, interval=interval)
     except Exception as e:
-        return {"error": f"yfinance error: {e}"}
+        return {"error": f"yfinance error for {symbol}: {e}"}
 
     if df is None or df.empty:
-        return {"error": "No data returned from yfinance for this symbol."}
+        return {"error": f"No data returned from yfinance for {symbol}."}
 
-    closes = df["Close"].dropna().tolist()
+    return df
+
+
+def closes_from_df(df):
+    try:
+        closes = df["Close"].dropna().tolist()
+    except Exception:
+        return {"error": "Missing Close prices in data."}
+
     if len(closes) < 10:
         return {"error": "Not enough price history to analyze."}
-
     return closes
 
 # =========================
-#  KITE INTRADAY SIGNAL (OPTIONAL)
+#  KITE INTRADAY RISK (OPTIONAL)
 # =========================
 
 KITE_API_KEY = os.getenv("KITE_API_KEY")
@@ -161,18 +159,30 @@ def get_kite_intraday_risk(user_sym: str):
     return {"level": level}
 
 # =========================
-#  MAIN HYBRID ENDPOINT
+#  ROOT
+# =========================
+
+@app.get("/")
+def root():
+    return {
+        "message": "Fineryx AI backend is running 🚀",
+        "endpoints": [
+            "/api/analyze-stock",
+            "/api/market-sentiment",
+            "/api/ai-picks",
+            "/api/volatility-checker",
+            "/api/portfolio-risk",
+        ],
+    }
+
+# =========================
+#  1) STOCK ANALYZER
 # =========================
 
 @app.get("/api/analyze-stock")
 def analyze_stock(symbol: str):
     """
-    Public-ish endpoint:
-        /api/analyze-stock?symbol=RELIANCE
-
-    Base engine: yfinance (1y closes, SMAs, 52w range, risk estimate).
-    Extra spice: if Kite is configured for YOU, refine risk using intraday volatility,
-    but only as a category (Low/Medium/High), never exposing raw broker data.
+    Stock analyzer: trend, risk, 52-week, AI-style summary.
     """
     user_sym, yahoo_sym, sym_error = resolve_symbol(symbol)
 
@@ -182,43 +192,38 @@ def analyze_stock(symbol: str):
             "symbol": user_sym or symbol,
         }
 
-    history = fetch_price_history(yahoo_sym)
-
-    if isinstance(history, dict) and "error" in history:
+    df = fetch_history_df(yahoo_sym, period="1y", interval="1d")
+    if isinstance(df, dict) and "error" in df:
         return {
-            "error": history["error"],
+            "error": df["error"],
             "symbol": user_sym,
             "data_symbol_used": yahoo_sym,
         }
 
-    if not isinstance(history, list) or len(history) < 10:
+    closes = closes_from_df(df)
+    if isinstance(closes, dict) and "error" in closes:
         return {
-            "error": "Not enough data points for analysis.",
+            "error": closes["error"],
             "symbol": user_sym,
             "data_symbol_used": yahoo_sym,
         }
-
-    closes = history
 
     # Basic prices
     last_close = closes[-1]
     prev_close = closes[-2]
-    if prev_close == 0:
-        change_pct = 0.0
-    else:
-        change_pct = (last_close - prev_close) / prev_close * 100
+    change_pct = 0.0 if prev_close == 0 else (last_close - prev_close) / prev_close * 100
 
-    # Simple moving averages
-    def sma(n: int):
-        if len(closes) < n:
+    # SMAs
+    def sma(arr, n: int):
+        if len(arr) < n:
             return None
-        return mean(closes[-n:])
+        return mean(arr[-n:])
 
-    sma20 = sma(20)
-    sma50 = sma(50)
-    sma200 = sma(200)
+    sma20 = sma(closes, 20)
+    sma50 = sma(closes, 50)
+    sma200 = sma(closes, 200)
 
-    # Short-term trend: 20 vs 50
+    # Short-term trend
     if sma20 and sma50:
         if sma20 > sma50 * 1.01:
             short_view = "Bullish"
@@ -229,7 +234,7 @@ def analyze_stock(symbol: str):
     else:
         short_view = "Not enough data"
 
-    # Long-term trend: 50 vs 200
+    # Long-term trend
     if sma50 and sma200:
         if sma50 > sma200 * 1.01:
             long_view = "Bullish"
@@ -254,7 +259,7 @@ def analyze_stock(symbol: str):
     else:
         range_comment = "in the middle of its 52-week range"
 
-    # Historical volatility from daily returns
+    # Historical vol
     returns = []
     for i in range(1, len(closes)):
         prev = closes[i - 1]
@@ -276,21 +281,18 @@ def analyze_stock(symbol: str):
     else:
         risk_level = "High"
 
-    # Try to refine risk using Kite intraday (if available)
+    # Optional intraday refinement via Kite
     kite_hint = get_kite_intraday_risk(user_sym)
     live_hint_text = None
-
     if kite_hint and "level" in kite_hint:
         kite_level = kite_hint["level"]
-
         order = {"Low": 0, "Medium": 1, "High": 2}
         if kite_level in order and risk_level in order:
             if order[kite_level] > order[risk_level]:
                 risk_level = kite_level
-
         live_hint_text = f"Intraday broker feed suggests {kite_level.lower()} volatility today."
 
-    # AI-style opinion
+    # Opinion
     parts = []
     parts.append(f"{user_sym} (data: {yahoo_sym}) is currently around ₹{last_close:.2f}.")
     parts.append(
@@ -307,7 +309,6 @@ def analyze_stock(symbol: str):
     parts.append(
         "Always pair this AI-style view with your own research, risk appetite, and time horizon."
     )
-
     opinion = " ".join(parts)
 
     return {
@@ -321,10 +322,441 @@ def analyze_stock(symbol: str):
         "hi_52w": round(hi_52w, 2),
         "lo_52w": round(lo_52w, 2),
         "ai_opinion": opinion,
-        "live_hint": live_hint_text,  # may be null if Kite not configured
+        "live_hint": live_hint_text,
         "disclaimer": (
             "Prices are derived using yfinance (Yahoo Finance data) and may be delayed/inaccurate. "
             "Intraday risk hints (if present) may use your private broker data on the server side. "
             "Fineryx AI is for informational purposes only, not investment advice."
+        ),
+    }
+
+# =========================
+#  2) MARKET SENTIMENT
+# =========================
+
+@app.get("/api/market-sentiment")
+def market_sentiment():
+    """
+    Fineryx Market Sentiment:
+    - Uses Nifty, BankNifty, and India VIX.
+    """
+    indices = {
+        "nifty": "^NSEI",
+        "banknifty": "^NSEBANK",
+        "vix": "INDIAVIX.NS",
+    }
+
+    out = {}
+    for key, ticker in indices.items():
+        df = fetch_history_df(ticker, period="5d", interval="1d")
+        if isinstance(df, dict) and "error" in df:
+            out[key] = {"error": df["error"]}
+        else:
+            out[key] = df
+
+    # Nifty change
+    nifty_change = None
+    if not isinstance(out["nifty"], dict):
+        closes = out["nifty"]["Close"].dropna().tolist()
+        if len(closes) >= 2:
+            nifty_change = (closes[-1] - closes[-2]) / closes[-2] * 100
+
+    # BankNifty change
+    banknifty_change = None
+    if not isinstance(out["banknifty"], dict):
+        closes = out["banknifty"]["Close"].dropna().tolist()
+        if len(closes) >= 2:
+            banknifty_change = (closes[-1] - closes[-2]) / closes[-2] * 100
+
+    # VIX last value
+    vix_value = None
+    if not isinstance(out["vix"], dict):
+        closes = out["vix"]["Close"].dropna().tolist()
+        if len(closes) >= 1:
+            vix_value = closes[-1]
+
+    # VIX mood
+    if vix_value is None:
+        vix_bucket = "Unknown"
+    elif vix_value < 12:
+        vix_bucket = "Calm"
+    elif vix_value < 16:
+        vix_bucket = "Normal"
+    elif vix_value < 22:
+        vix_bucket = "Elevated"
+    else:
+        vix_bucket = "High Volatility"
+
+    # Nifty-based overall mood
+    if nifty_change is None:
+        mood = "Unknown"
+    elif nifty_change > 0.75:
+        mood = "Bullish"
+    elif nifty_change > 0.25:
+        mood = "Mild Bullish"
+    elif nifty_change > -0.25:
+        mood = "Neutral"
+    elif nifty_change > -0.75:
+        mood = "Mild Bearish"
+    else:
+        mood = "Bearish"
+
+    # Confidence via BankNifty
+    if banknifty_change is None or nifty_change is None:
+        confidence = "Unknown"
+    else:
+        same_side = (nifty_change >= 0 and banknifty_change >= 0) or (
+            nifty_change <= 0 and banknifty_change <= 0
+        )
+        confidence = "Strong" if same_side else "Mixed"
+
+    summary_parts = []
+    if nifty_change is not None:
+        summary_parts.append(
+            f"Market mood looks {mood.lower()} with Nifty move around {nifty_change:.2f}%."
+        )
+    else:
+        summary_parts.append("Market mood is unclear.")
+    if banknifty_change is not None:
+        summary_parts.append(f"BankNifty is at {banknifty_change:.2f}% move.")
+    if vix_value is not None:
+        summary_parts.append(
+            f"India VIX is {vix_value:.2f}, indicating {vix_bucket.lower()} volatility."
+        )
+    summary = " ".join(summary_parts)
+
+    return {
+        "mood": mood,
+        "confidence": confidence,
+        "nifty_change": round(nifty_change, 2) if nifty_change is not None else None,
+        "banknifty_change": round(banknifty_change, 2) if banknifty_change is not None else None,
+        "vix": round(vix_value, 2) if vix_value is not None else None,
+        "vix_bucket": vix_bucket,
+        "summary": summary,
+    }
+
+# =========================
+#  3) AI STOCK PICKS (MOMENTUM)
+# =========================
+
+# Simple initial universe – expand later if you want
+NIFTY_CANDIDATES = [
+    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
+    "SBIN", "AXISBANK", "LT", "ITC", "KOTAKBANK",
+    "ASIANPAINT", "HINDUNILVR", "BAJFINANCE", "ULTRACEMCO",
+    "MARUTI", "SUNPHARMA", "TITAN", "POWERGRID", "NTPC"
+]
+
+@app.get("/api/ai-picks")
+def ai_picks(limit: int = 5):
+    """
+    Fineryx AI Stock Picks: momentum-based scanner over a small universe.
+    """
+    picks = []
+
+    for sym in NIFTY_CANDIDATES:
+        user_sym, yahoo_sym, sym_error = resolve_symbol(sym)
+        if sym_error or not yahoo_sym:
+            continue
+
+        df = fetch_history_df(yahoo_sym, period="1y", interval="1d")
+        if isinstance(df, dict) and "error" in df:
+            continue
+
+        closes = df["Close"].dropna().tolist()
+        if len(closes) < 60:
+            continue
+
+        last_close = closes[-1]
+        hi_52w = max(closes)
+
+        # basic SMAs
+        def sma(arr, n):
+            return mean(arr[-n:]) if len(arr) >= n else None
+
+        sma20 = sma(closes, 20)
+        sma50 = sma(closes, 50)
+
+        if sma20 is None or sma50 is None:
+            continue
+
+        momentum_strength = (sma20 - sma50) / sma50 * 100
+
+        # 52w high proximity
+        dist_high = (hi_52w - last_close) / hi_52w * 100 if hi_52w else 999
+
+        # daily vol
+        returns = []
+        for i in range(1, len(closes)):
+            prev = closes[i - 1]
+            cur = closes[i]
+            if prev:
+                returns.append((cur - prev) / prev * 100)
+        if not returns:
+            continue
+
+        avg_ret = sum(returns) / len(returns)
+        var = sum((r - avg_ret) ** 2 for r in returns) / len(returns)
+        vol = math.sqrt(var)
+
+        # Reject too volatile
+        if vol > 3.5:
+            continue
+
+        # Trend score (simple)
+        trend_score = 2 if sma20 > sma50 else 0
+
+        volatility_penalty = max(0, vol - 1.5)
+
+        score = (momentum_strength * 2) + trend_score - volatility_penalty
+
+        picks.append({
+            "symbol": user_sym,
+            "data_symbol_used": yahoo_sym,
+            "last_close": round(last_close, 2),
+            "momentum_strength": round(momentum_strength, 2),
+            "distance_from_high_pct": round(dist_high, 2),
+            "volatility": round(vol, 2),
+            "score": round(score, 2),
+        })
+
+    # Sort & limit
+    picks_sorted = sorted(picks, key=lambda x: x["score"], reverse=True)
+    picks_out = picks_sorted[: max(1, min(limit, 10))]
+
+    summary = (
+        "These stocks appear to show relatively clean price momentum with controlled volatility "
+        "based on Fineryx's internal momentum model."
+    )
+
+    return {
+        "universe_size": len(NIFTY_CANDIDATES),
+        "picked": len(picks_out),
+        "summary": summary,
+        "picks": picks_out,
+    }
+
+# =========================
+#  4) VOLATILITY CHECKER
+# =========================
+
+@app.get("/api/volatility-checker")
+def volatility_checker(symbol: str):
+    """
+    Classify stock as Very Calm / Calm / Moderate / Volatile / Highly Volatile
+    and provide ATR-based confirmation.
+    """
+    user_sym, yahoo_sym, sym_error = resolve_symbol(symbol)
+    if sym_error:
+        return {"error": sym_error, "symbol": user_sym or symbol}
+
+    df = fetch_history_df(yahoo_sym, period="1y", interval="1d")
+    if isinstance(df, dict) and "error" in df:
+        return {"error": df["error"], "symbol": user_sym, "data_symbol_used": yahoo_sym}
+
+    closes = df["Close"].dropna()
+    if len(closes) < 30:
+        return {"error": "Not enough history for volatility analysis.", "symbol": user_sym}
+
+    prices = closes.tolist()
+    # daily returns
+    rets = []
+    for i in range(1, len(prices)):
+        if prices[i - 1]:
+            rets.append((prices[i] - prices[i - 1]) / prices[i - 1] * 100)
+
+    if not rets:
+        return {"error": "Unable to compute returns.", "symbol": user_sym}
+
+    avg_ret = sum(rets) / len(rets)
+    var = sum((r - avg_ret) ** 2 for r in rets) / len(rets)
+    vol = math.sqrt(var)
+
+    # Vol buckets
+    if vol < 1.2:
+        vol_bucket = "Very Calm"
+    elif vol < 2.2:
+        vol_bucket = "Calm"
+    elif vol < 3.5:
+        vol_bucket = "Moderate"
+    elif vol < 5:
+        vol_bucket = "Volatile"
+    else:
+        vol_bucket = "Highly Volatile"
+
+    # ATR 14
+    try:
+        highs = df["High"].tolist()
+        lows = df["Low"].tolist()
+        closes_list = df["Close"].tolist()
+        trs = []
+        for i in range(1, len(highs)):
+            tr = max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes_list[i - 1]),
+                abs(lows[i] - closes_list[i - 1]),
+            )
+            trs.append(tr)
+        if len(trs) >= 14:
+            atr14 = sum(trs[-14:]) / 14.0
+        else:
+            atr14 = sum(trs) / len(trs) if trs else 0.0
+    except Exception:
+        atr14 = 0.0
+
+    last_close = prices[-1]
+    atr_pct = (atr14 / last_close * 100) if last_close else 0.0
+
+    # ATR bucket
+    if atr_pct < 1.5:
+        atr_bucket = "Stable"
+    elif atr_pct < 3:
+        atr_bucket = "Moderate"
+    else:
+        atr_bucket = "Wild"
+
+    summary = (
+        f"{user_sym} shows {vol_bucket.lower()} historical volatility (~{vol:.2f}% daily) "
+        f"with ATR around {atr_pct:.2f}% of price, indicating {atr_bucket.lower()} intraday structure."
+    )
+
+    return {
+        "symbol": user_sym,
+        "data_symbol_used": yahoo_sym,
+        "historical_volatility_pct": round(vol, 2),
+        "volatility_bucket": vol_bucket,
+        "atr_14": round(atr14, 2),
+        "atr_pct_of_price": round(atr_pct, 2),
+        "atr_bucket": atr_bucket,
+        "summary": summary,
+    }
+
+# =========================
+#  5) PORTFOLIO RISK CHECKER
+# =========================
+
+class Holding(BaseModel):
+    symbol: str
+    weight: Optional[float] = None  # percentage like 25.0
+
+
+class PortfolioRequest(BaseModel):
+    holdings: List[Holding]
+
+
+@app.post("/api/portfolio-risk")
+def portfolio_risk(req: PortfolioRequest):
+    """
+    Simple portfolio risk checker:
+    - Uses provided weights (percentages).
+    - Computes volatility-weighted risk.
+    - Flags concentration.
+    """
+    if not req.holdings:
+        return {"error": "Provide at least one holding."}
+
+    # Normalize weights if missing or not summing to 100
+    weights = []
+    symbols = []
+    for h in req.holdings:
+        if not h.symbol:
+            continue
+        symbols.append(h.symbol.upper())
+        weights.append(h.weight if h.weight is not None else 0.0)
+
+    if not symbols:
+        return {"error": "No valid symbols provided."}
+
+    total_w = sum(weights)
+    if total_w <= 0:
+        # equal weights
+        weights = [1.0 / len(symbols)] * len(symbols)
+    else:
+        weights = [w / total_w for w in weights]
+
+    # Compute per-stock vol
+    stock_infos = []
+    for sym, w in zip(symbols, weights):
+        user_sym, yahoo_sym, sym_error = resolve_symbol(sym)
+        if sym_error or not yahoo_sym:
+            stock_infos.append(
+                {"symbol": user_sym or sym, "weight": round(w * 100, 2), "error": sym_error or "Resolution failed"}
+            )
+            continue
+
+        df = fetch_history_df(yahoo_sym, period="1y", interval="1d")
+        if isinstance(df, dict) and "error" in df:
+            stock_infos.append(
+                {"symbol": user_sym, "weight": round(w * 100, 2), "error": df["error"]}
+            )
+            continue
+
+        closes = df["Close"].dropna().tolist()
+        if len(closes) < 30:
+            stock_infos.append(
+                {"symbol": user_sym, "weight": round(w * 100, 2), "error": "Not enough data"}
+            )
+            continue
+
+        rets = []
+        for i in range(1, len(closes)):
+            if closes[i - 1]:
+                rets.append((closes[i] - closes[i - 1]) / closes[i - 1] * 100)
+        if not rets:
+            stock_infos.append(
+                {"symbol": user_sym, "weight": round(w * 100, 2), "error": "Unable to compute returns"}
+            )
+            continue
+
+        avg_ret = sum(rets) / len(rets)
+        var = sum((r - avg_ret) ** 2 for r in rets) / len(rets)
+        vol = math.sqrt(var)
+
+        stock_infos.append(
+            {
+                "symbol": user_sym,
+                "data_symbol_used": yahoo_sym,
+                "weight": round(w * 100, 2),
+                "volatility_pct": round(vol, 2),
+            }
+        )
+
+    # portfolio risk = sum(weight * vol)
+    portfolio_risk_val = 0.0
+    for info in stock_infos:
+        if "volatility_pct" in info and "weight" in info:
+            portfolio_risk_val += (info["weight"] / 100.0) * info["volatility_pct"]
+
+    # risk buckets
+    if portfolio_risk_val < 1.8:
+        risk_bucket = "Low"
+    elif portfolio_risk_val < 3:
+        risk_bucket = "Medium"
+    else:
+        risk_bucket = "High"
+
+    # concentration flag
+    warnings = []
+    for info in stock_infos:
+        if "weight" in info and info["weight"] > 35:
+            warnings.append(f"{info['symbol']} is {info['weight']}% of portfolio (high concentration).")
+
+    summary_parts = [
+        f"Portfolio risk looks {risk_bucket.lower()} with volatility-weighted score around {portfolio_risk_val:.2f}."
+    ]
+    if warnings:
+        summary_parts.append(" ".join(warnings))
+
+    summary = " ".join(summary_parts)
+
+    return {
+        "portfolio_risk_score": round(portfolio_risk_val, 2),
+        "portfolio_risk_bucket": risk_bucket,
+        "holdings": stock_infos,
+        "warnings": warnings,
+        "summary": summary,
+        "disclaimer": (
+            "Portfolio analysis is based on historical price volatility only and does not account for all risks. "
+            "Informational use only, not investment advice."
         ),
     }
