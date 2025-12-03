@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Fineryx – Try AI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    /* PAGE BACKGROUND */
+    body {
+      background: radial-gradient(circle at top, #0d1117 0%, #000000 80%);
+      color: #e4e4e4;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      margin: 0;
+    }
+
+    /* CONTAINER */
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    /* HERO SECTION */
+    .try-ai-hero {
+      padding: 3rem 0 1.5rem;
+      text-align: center;
+    }
+
+    .try-ai-hero h1 {
+      font-size: 2.8rem;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(90deg, #66b2ff, #9d7dff);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .try-ai-hero p {
+      font-size: 1.1rem;
+      color: #c7c7c7;
+    }
+
+    /* CARDS GRID */
+    .ai-tools-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.7rem;
+      padding-bottom: 3rem;
+    }
+
+    /* BASE CARD STYLE */
+    .ai-card {
+      padding: 1.8rem;
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.9);
+      transition: all 0.25s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .ai-card::before {
+      content: "";
+      position: absolute;
+      inset: -40%;
+      opacity: 0.14;
+      background: radial-gradient(circle at top, rgba(255,255,255,0.55), transparent 55%);
+      transform: translateY(25%);
+      pointer-events: none;
+    }
+
+    .ai-card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 22px 55px rgba(15, 23, 42, 0.95);
+    }
+
+    .ai-card h2 {
+      margin-bottom: 0.55rem;
+      font-size: 1.25rem;
+    }
+
+    .ai-card p {
+      font-size: 0.95rem;
+      color: #dcdcdc;
+      margin-bottom: 1.1rem;
+    }
+
+    /* BUTTONS */
+    .ai-card button,
+    .ai-modal-content button {
+      color: white;
+      padding: 0.55rem 1.4rem;
+      border: none;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: 0.25s ease;
+      font-weight: 500;
+    }
+
+    .ai-card button:hover,
+    .ai-modal-content button:hover {
+      transform: translateY(-2px);
+      opacity: 0.9;
+    }
+
+    /* CARD COLOR THEMES */
+    .ai-card-stock {
+      border-color: rgba(59, 130, 246, 0.6);
+      background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.35), rgba(15, 23, 42, 0.9));
+    }
+    .ai-card-stock h2 {
+      background: linear-gradient(90deg, #60a5fa, #3b82f6);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .ai-card-stock button {
+      background: linear-gradient(135deg, #3b82f6, #60a5fa);
+    }
+
+    .ai-card-sentiment {
+      border-color: rgba(34, 197, 94, 0.6);
+      background: radial-gradient(circle at top left, rgba(22, 163, 74, 0.35), rgba(15, 23, 42, 0.9));
+    }
+    .ai-card-sentiment h2 {
+      background: linear-gradient(90deg, #4ade80, #22c55e);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .ai-card-sentiment button {
+      background: linear-gradient(135deg, #22c55e, #4ade80);
+    }
+
+    .ai-card-picks {
+      border-color: rgba(139, 92, 246, 0.7);
+      background: radial-gradient(circle at top left, rgba(109, 40, 217, 0.4), rgba(15, 23, 42, 0.9));
+    }
+    .ai-card-picks h2 {
+      background: linear-gradient(90deg, #a855f7, #8b5cf6);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .ai-card-picks button {
+      background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    }
+
+    .ai-card-risk {
+      border-color: rgba(249, 115, 22, 0.7);
+      background: radial-gradient(circle at top left, rgba(194, 65, 12, 0.4), rgba(15, 23, 42, 0.9));
+    }
+    .ai-card-risk h2 {
+      background: linear-gradient(90deg, #fb923c, #f97316);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .ai-card-risk button {
+      background: linear-gradient(135deg, #f97316, #fb923c);
+    }
+
+    .ai-card-volatility {
+      border-color: rgba(245, 208, 66, 0.7);
+      background: radial-gradient(circle at top left, rgba(234, 179, 8, 0.35), rgba(15, 23, 42, 0.9));
+    }
+    .ai-card-volatility h2 {
+      background: linear-gradient(90deg, #facc15, #fbbf24);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .ai-card-volatility button {
+      background: linear-gradient(135deg, #fbbf24, #facc15);
+    }
+
+    /* MODAL */
+    .ai-modal.hidden {
+      display: none;
+    }
+    .ai-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    .ai-modal-content {
+      background: radial-gradient(circle at top, #020617, #020617 45%, #020617);
+      max-width: 480px;
+      width: 90%;
+      padding: 2rem 1.6rem 1.6rem;
+      border-radius: 20px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      box-shadow: 0 20px 55px rgba(15, 23, 42, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .ai-modal-content::before {
+      content: "";
+      position: absolute;
+      inset: -50%;
+      background: radial-gradient(circle at top, rgba(96, 165, 250, 0.35), transparent 65%);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    .ai-modal-content h2 {
+      position: relative;
+      z-index: 1;
+      background: linear-gradient(90deg, #60a5fa, #a855f7);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .ai-modal-close {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      background: rgba(15,23,42,0.7);
+      border-radius: 999px;
+      padding: 0.15rem 0.45rem;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      font-size: 0.9rem;
+      color: #e5e7eb;
+      cursor: pointer;
+      transition: 0.2s ease;
+      z-index: 2;
+    }
+
+    .ai-modal-close:hover {
+      background: rgba(15,23,42,1);
+    }
+
+    .ai-modal-content input {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      margin: 1rem 0;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      background: #020617;
+      color: #fff;
+      font-size: 0.95rem;
+    }
+
+    .ai-modal-content button {
+      position: relative;
+      z-index: 1;
+      background: linear-gradient(135deg, #3b82f6, #60a5fa);
+    }
+
+    /* OUTPUT AREA – keep same vibe */
+    .ai-output {
+      position: relative;
+      z-index: 1;
+      margin-top: 1.2rem;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: #e3e3e3;
+    }
+
+    .ai-output h3 {
+      margin-bottom: 0.4rem;
+      font-size: 1.05rem;
+    }
+
+    .ai-output small {
+      opacity: 0.7;
+      font-size: 0.8rem;
+    }
+
+    .ai-disclaimer {
+      position: relative;
+      z-index: 1;
+      margin-top: 1rem;
+      font-size: 0.78rem;
+      opacity: 0.6;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- HERO -->
+  <section class="try-ai-hero">
+    <div class="container">
+      <h1>Experience Fineryx AI</h1>
+      <p>Smart tools to decode markets using price & trend data. Fundamentals coming soon.</p>
+    </div>
+  </section>
+
+  <!-- TOOLS GRID -->
+  <section class="ai-tools-grid container">
+    <div class="ai-card ai-card-stock">
+      <h2>Stock Analyzer</h2>
+      <p>Analyze any stock in seconds. Get trend, risk view and a simple AI-style explanation.</p>
+      <button onclick="openTool('stock-analyzer')">Try Stock Analyzer</button>
+    </div>
+
+    <div class="ai-card ai-card-sentiment">
+      <h2>Market Sentiment</h2>
+      <p>Quick view of index mood and market tone. (Coming soon)</p>
+      <button onclick="openTool('sentiment')">Check Sentiment</button>
+    </div>
+
+    <div class="ai-card ai-card-picks">
+      <h2>AI Stock Picks</h2>
+      <p>Momentum-driven ideas based on recent price action. (Coming soon)</p>
+      <button onclick="openTool('picks')">Get AI Picks</button>
+    </div>
+
+    <div class="ai-card ai-card-risk">
+      <h2>Portfolio Risk Checker</h2>
+      <p>Paste holdings and see basic risk & concentration. (Coming soon)</p>
+      <button onclick="openTool('risk')">Check Portfolio Risk</button>
+    </div>
+
+    <div class="ai-card ai-card-volatility">
+      <h2>Volatility Checker</h2>
+      <p>See if a stock is calm, moderate or wild based on its swings. (Coming soon)</p>
+      <button onclick="openTool('volatility')">Check Volatility</button>
+    </div>
+  </section>
+
+  <!-- STOCK ANALYZER MODAL -->
+  <div id="stock-analyzer-modal" class="ai-modal hidden">
+    <div class="ai-modal-content">
+      <button class="ai-modal-close" onclick="closeTool('stock-analyzer')">✕</button>
+      <h2>Stock Analyzer</h2>
+      <p>Enter any NSE stock symbol (e.g. RELIANCE, TCS, HDFCBANK).</p>
+
+      <input id="stock-symbol-input" placeholder="e.g. RELIANCE" />
+      <button onclick="runStockAnalyzer()">Analyze</button>
+
+      <div id="stock-analyzer-output" class="ai-output"></div>
+
+      <p class="ai-disclaimer">
+        Fineryx AI is in beta. Outputs are for informational purposes only, not investment advice.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // For local testing:
+    // When you deploy backend (Render / VPS), replace this with the live URL.
+    // Example later: const BACKEND_URL = "https://fineryx-backend.onrender.com";
+    const BACKEND_URL = "http://127.0.0.1:8000";
+
+    function openTool(tool) {
+      if (tool === "stock-analyzer") {
+        document.getElementById("stock-analyzer-modal").classList.remove("hidden");
+        document.getElementById("stock-analyzer-output").innerHTML = "";
+        document.getElementById("stock-symbol-input").value = "";
+      } else if (tool === "sentiment") {
+        alert("Market Sentiment tool is coming soon.");
+      } else if (tool === "picks") {
+        alert("AI Stock Picks are coming soon.");
+      } else if (tool === "risk") {
+        alert("Portfolio Risk Checker is coming soon.");
+      } else if (tool === "volatility") {
+        alert("Volatility Checker is coming soon.");
+      }
+    }
+
+    function closeTool(tool) {
+      if (tool === "stock-analyzer") {
+        document.getElementById("stock-analyzer-modal").classList.add("hidden");
+      }
+    }
+
+    async function runStockAnalyzer() {
+      const input = document.getElementById("stock-symbol-input");
+      const output = document.getElementById("stock-analyzer-output");
+
+      let symbol = (input.value || "").trim().toUpperCase();
+      if (!symbol) {
+        output.innerHTML = "<p>Please enter a stock symbol.</p>";
+        return;
+      }
+
+      output.innerHTML = "<p>Analyzing <b>" + symbol + "</b>...</p>";
+
+      try {
+        const res = await fetch(
+          BACKEND_URL +
+            "/api/analyze-stock?symbol=" +
+            encodeURIComponent(symbol)
+        );
+
+        // Network error / CORS / backend down
+        if (!res.ok) {
+          output.innerHTML = "<p>Could not reach Fineryx AI backend (" + res.status + ").</p>";
+          return;
+        }
+
+        const data = await res.json();
+
+        if (data.error) {
+          output.innerHTML = `<p><b>Error:</b> ${data.error}</p>`;
+          return;
+        }
+
+        // Build nice output block
+        const liveHint = data.live_hint ? `<p>${data.live_hint}</p>` : "";
+
+        output.innerHTML = `
+          <h3>${data.symbol}</h3>
+          <p><b>Last Price:</b> ₹${data.last_close}</p>
+          <p><b>Change:</b> ${data.change_percent}%</p>
+          <p><b>Short-term view:</b> ${data.short_term_view}</p>
+          <p><b>Long-term view:</b> ${data.long_term_view}</p>
+          <p><b>Risk level:</b> ${data.risk_level}</p>
+          <p><b>52-week range:</b> ₹${data.lo_52w} – ₹${data.hi_52w}</p>
+          <p style="margin-top: 8px;">${data.ai_opinion}</p>
+          ${liveHint}
+          <small>${data.disclaimer}</small>
+        `;
+      } catch (err) {
+        console.error(err);
+        output.innerHTML = "<p>Could not connect to Fineryx AI backend. Is it running?</p>";
+      }
+    }
+  </script>
+</body>
+</html>
