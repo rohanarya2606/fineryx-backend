@@ -1,4 +1,3 @@
-
 import os
 import math
 from statistics import mean
@@ -25,6 +24,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# =========================
+#  KEEPALIVE: PING ENDPOINT (NEW)
+# =========================
+
+@app.get("/ping")
+def ping():
+    """
+    Lightweight health endpoint for UptimeRobot / keepalive.
+    """
+    return {"status": "ok", "message": "Fineryx backend warm 🔥"}
+
+
+# ========= OPTIONAL AUTO-WARMUP ON STARTUP (NEW) =========
+
+@app.on_event("startup")
+def warmup():
+    """
+    This runs ONCE when Render starts the container.
+    It does a tiny yfinance call to warm imports, DNS, SSL, etc.
+    Helps reduce cold-start delay on the first real user request.
+    """
+    try:
+        print("🔥 Fineryx Warmup: starting warmup fetch...")
+        ticker = yf.Ticker("RELIANCE.NS")  # any common, liquid symbol
+        ticker.history(period="1d", interval="1d")  # very light
+        print("🔥 Fineryx Warmup: completed successfully.")
+    except Exception as e:
+        print("⚠️ Warmup error:", e)
+
 
 # =========================
 #  HELPER: SYMBOL RESOLUTION
@@ -167,12 +196,15 @@ def get_kite_intraday_risk(user_sym: str):
 def root():
     return {
         "message": "Fineryx AI backend is running 🚀",
+        "ping": "/ping",
+        "warmup": "enabled",
         "endpoints": [
             "/api/analyze-stock",
             "/api/market-sentiment",
             "/api/ai-picks",
             "/api/volatility-checker",
             "/api/portfolio-risk",
+            "/health",
         ],
     }
 
@@ -635,6 +667,7 @@ def volatility_checker(symbol: str):
 # =========================
 #  5) PORTFOLIO RISK CHECKER
 # =========================
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -765,4 +798,3 @@ def portfolio_risk(req: PortfolioRequest):
             "Informational use only, not investment advice."
         ),
     }
-
