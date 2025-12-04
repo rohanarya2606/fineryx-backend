@@ -634,6 +634,10 @@ def volatility_checker(symbol: str):
 # =========================
 #  5) PORTFOLIO RISK CHECKER
 # =========================
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 
 class Holding(BaseModel):
     symbol: str
@@ -760,3 +764,4 @@ def portfolio_risk(req: PortfolioRequest):
             "Informational use only, not investment advice."
         ),
     }
+
