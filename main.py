@@ -1,3 +1,4 @@
+
 import os
 import math
 from statistics import mean
@@ -16,9 +17,7 @@ except ImportError:
 
 app = FastAPI()
 
-# ==========================================
-#  CORS – open for now (can tighten later)
-# ==========================================
+# CORS – open for now (can tighten later)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,34 +25,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ==========================================
-#  KEEPALIVE: PING ENDPOINT (NEW)
-# ==========================================
-@app.get("/ping")
-def ping():
-    """
-    Lightweight health endpoint for UptimeRobot / keepalive.
-    """
-    return {"status": "ok", "message": "Fineryx backend warm 🔥"}
-
-
-# ========= OPTIONAL AUTO-WARMUP ON STARTUP (NEW) =========
-@app.on_event("startup")
-def warmup():
-    """
-    This runs ONCE when Render starts the container.
-    It does a tiny yfinance call to warm imports, DNS, SSL, etc.
-    Helps reduce cold-start delay on the first real user request.
-    """
-    try:
-        print("🔥 Fineryx Warmup: starting warmup fetch...")
-        ticker = yf.Ticker("RELIANCE.NS")  # any common, liquid symbol
-        ticker.history(period="1d", interval="1d")  # very light
-        print("🔥 Fineryx Warmup: completed successfully.")
-    except Exception as e:
-        print("⚠️ Warmup error:", e)
-
 
 # =========================
 #  HELPER: SYMBOL RESOLUTION
@@ -196,15 +167,12 @@ def get_kite_intraday_risk(user_sym: str):
 def root():
     return {
         "message": "Fineryx AI backend is running 🚀",
-        "ping": "/ping",
-        "warmup": "enabled",
         "endpoints": [
             "/api/analyze-stock",
             "/api/market-sentiment",
             "/api/ai-picks",
             "/api/volatility-checker",
             "/api/portfolio-risk",
-            "/health",
         ],
     }
 
@@ -262,7 +230,6 @@ def analyze_stock(symbol: str):
             short_view = "Bullish"
         elif sma20 < sma50 * 0.99:
             short_view = "Bearish"
-            #range_comment="sideways"
         else:
             short_view = "Sideways"
     else:
@@ -473,6 +440,7 @@ def market_sentiment():
 #  3) AI STOCK PICKS (MOMENTUM)
 # =========================
 
+# Simple initial universe – expand later if you want
 NIFTY_CANDIDATES = [
     "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
     "SBIN", "AXISBANK", "LT", "ITC", "KOTAKBANK",
@@ -503,6 +471,7 @@ def ai_picks(limit: int = 5):
         last_close = closes[-1]
         hi_52w = max(closes)
 
+        # basic SMAs
         def sma(arr, n):
             return mean(arr[-n:]) if len(arr) >= n else None
 
@@ -514,8 +483,10 @@ def ai_picks(limit: int = 5):
 
         momentum_strength = (sma20 - sma50) / sma50 * 100
 
+        # 52w high proximity
         dist_high = (hi_52w - last_close) / hi_52w * 100 if hi_52w else 999
 
+        # daily vol
         returns = []
         for i in range(1, len(closes)):
             prev = closes[i - 1]
@@ -529,11 +500,15 @@ def ai_picks(limit: int = 5):
         var = sum((r - avg_ret) ** 2 for r in returns) / len(returns)
         vol = math.sqrt(var)
 
+        # Reject too volatile
         if vol > 3.5:
             continue
 
+        # Trend score (simple)
         trend_score = 2 if sma20 > sma50 else 0
+
         volatility_penalty = max(0, vol - 1.5)
+
         score = (momentum_strength * 2) + trend_score - volatility_penalty
 
         picks.append({
@@ -546,6 +521,7 @@ def ai_picks(limit: int = 5):
             "score": round(score, 2),
         })
 
+    # Sort & limit
     picks_sorted = sorted(picks, key=lambda x: x["score"], reverse=True)
     picks_out = picks_sorted[: max(1, min(limit, 10))]
 
@@ -584,7 +560,7 @@ def volatility_checker(symbol: str):
         return {"error": "Not enough history for volatility analysis.", "symbol": user_sym}
 
     prices = closes.tolist()
-
+    # daily returns
     rets = []
     for i in range(1, len(prices)):
         if prices[i - 1]:
@@ -597,6 +573,7 @@ def volatility_checker(symbol: str):
     var = sum((r - avg_ret) ** 2 for r in rets) / len(rets)
     vol = math.sqrt(var)
 
+    # Vol buckets
     if vol < 1.2:
         vol_bucket = "Very Calm"
     elif vol < 2.2:
@@ -608,6 +585,7 @@ def volatility_checker(symbol: str):
     else:
         vol_bucket = "Highly Volatile"
 
+    # ATR 14
     try:
         highs = df["High"].tolist()
         lows = df["Low"].tolist()
@@ -630,6 +608,7 @@ def volatility_checker(symbol: str):
     last_close = prices[-1]
     atr_pct = (atr14 / last_close * 100) if last_close else 0.0
 
+    # ATR bucket
     if atr_pct < 1.5:
         atr_bucket = "Stable"
     elif atr_pct < 3:
@@ -656,7 +635,6 @@ def volatility_checker(symbol: str):
 # =========================
 #  5) PORTFOLIO RISK CHECKER
 # =========================
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -682,6 +660,7 @@ def portfolio_risk(req: PortfolioRequest):
     if not req.holdings:
         return {"error": "Provide at least one holding."}
 
+    # Normalize weights if missing or not summing to 100
     weights = []
     symbols = []
     for h in req.holdings:
@@ -695,10 +674,12 @@ def portfolio_risk(req: PortfolioRequest):
 
     total_w = sum(weights)
     if total_w <= 0:
+        # equal weights
         weights = [1.0 / len(symbols)] * len(symbols)
     else:
         weights = [w / total_w for w in weights]
 
+    # Compute per-stock vol
     stock_infos = []
     for sym, w in zip(symbols, weights):
         user_sym, yahoo_sym, sym_error = resolve_symbol(sym)
@@ -745,11 +726,13 @@ def portfolio_risk(req: PortfolioRequest):
             }
         )
 
+    # portfolio risk = sum(weight * vol)
     portfolio_risk_val = 0.0
     for info in stock_infos:
         if "volatility_pct" in info and "weight" in info:
             portfolio_risk_val += (info["weight"] / 100.0) * info["volatility_pct"]
 
+    # risk buckets
     if portfolio_risk_val < 1.8:
         risk_bucket = "Low"
     elif portfolio_risk_val < 3:
@@ -757,6 +740,7 @@ def portfolio_risk(req: PortfolioRequest):
     else:
         risk_bucket = "High"
 
+    # concentration flag
     warnings = []
     for info in stock_infos:
         if "weight" in info and info["weight"] > 35:
@@ -781,3 +765,4 @@ def portfolio_risk(req: PortfolioRequest):
             "Informational use only, not investment advice."
         ),
     }
+
